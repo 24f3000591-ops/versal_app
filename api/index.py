@@ -15,16 +15,20 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-class LatencyRequest(BaseModel):
-    regions: List[str]
-    threshold_ms: float
-
-# Load JSON file
+# Load telemetry data
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+
+# q-vercel-latency.json should be in the project root
 JSON_PATH = os.path.join(BASE_DIR, "..", "q-vercel-latency.json")
 
 with open(JSON_PATH, "r", encoding="utf-8") as f:
     DATA = json.load(f)
+
+
+class LatencyRequest(BaseModel):
+    regions: List[str]
+    threshold_ms: float
+
 
 def percentile(values, p=95):
     values = sorted(values)
@@ -41,8 +45,9 @@ def percentile(values, p=95):
 
     return values[f] + (k - f) * (values[c] - values[f])
 
+
 @app.options("/")
-async def options_handler():
+async def options_root():
     return Response(
         status_code=200,
         headers={
@@ -52,16 +57,20 @@ async def options_handler():
         },
     )
 
+
 @app.get("/")
 async def health():
     return {"status": "ok"}
+
 
 @app.post("/")
 async def check_latency(payload: LatencyRequest):
     result = {}
 
-    for region in payload.regions:
-        rows = [r for r in DATA if r["region"] == region.lower()]
+    for region_name in payload.regions:
+        region = region_name.lower().strip()
+
+        rows = [r for r in DATA if r["region"] == region]
 
         if not rows:
             continue
@@ -69,15 +78,20 @@ async def check_latency(payload: LatencyRequest):
         latencies = [r["latency_ms"] for r in rows]
         uptimes = [r["uptime_pct"] for r in rows]
 
-        result[region.lower()] = {
+        result[region] = {
             "avg_latency": round(sum(latencies) / len(latencies), 2),
             "p95_latency": round(percentile(latencies, 95), 2),
             "avg_uptime": round(sum(uptimes) / len(uptimes), 3),
             "breaches": sum(
-                1 for x in latencies
-                if x > payload.threshold_ms
-            )
+                1
+                for latency in latencies
+                if latency > payload.threshold_ms
+            ),
         }
 
     return {"regions": result}
+
+
+# Vercel ASGI export
+handler = app
 ```
